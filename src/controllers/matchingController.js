@@ -118,7 +118,7 @@ walkRequest.otpVerified = false;
       walk_request_id: walkRequest._id,
       walker_id: walkerId,
       wanderer_id: walkRequest.wandererId,
-      status: 'ACCEPTED',
+      status: walkRequest.status,
       matched_at: walkRequest.matchedAt
     };
 
