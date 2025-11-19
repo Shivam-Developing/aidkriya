@@ -65,6 +65,17 @@ const walkRequestSchema = new mongoose.Schema({
   cancelledAt: {
     type: Date
   },
+  otp: {
+  type: String
+},
+otpExpiresAt: {
+  type: Date
+},
+otpVerified: {
+  type: Boolean,
+  default: false
+}
+,
   cancellationReason: {
     type: String
   },
