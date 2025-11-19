@@ -9,6 +9,7 @@ const { sendNotification, notificationTemplates } = require('../utils/notificati
 exports.findWalkers = async (req, res) => {
   try {
     const { walk_request_id } = req.body;
+
     const walkRequest = await WalkRequest.findById(walk_request_id);
 
     if (!walkRequest) {
@@ -129,7 +130,10 @@ exports.acceptWalkRequest = async (req, res) => {
 exports.rejectWalkRequest = async (req, res) => {
   try {
     const { match_id } = req.body;
+
     // In a real app, you'd track match rejections separately
+    // For now, we just acknowledge the rejection
+
     successResponse(res, 200, 'Walk request rejected');
   } catch (error) {
     console.error('Reject walk request error:', error);
@@ -173,7 +177,6 @@ exports.getPendingRequests = async (req, res) => {
       };
     }));
 
-    // Always send an array—even if matches.length is 0 or 1
     successResponse(res, 200, 'Pending requests retrieved', matches);
   } catch (error) {
     console.error('Get pending requests error:', error);
