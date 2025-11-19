@@ -11,6 +11,23 @@ const {
 } = require('../controllers/trackingController');
 const { protect } = require('../middleware/auth');
 const { validate, validators } = require('../middleware/validation');
+// Add these imports at the top with other controller imports
+const { getWalkOtp, verifyWalkOtp } = require('../controllers/trackingController');
+
+// Add these routes
+router.get('/otp/:walkRequestId', protect, getWalkOtp);
+
+router.post(
+  '/verify-otp',
+  protect,
+  [
+    body('walk_request_id').notEmpty().withMessage('Walk request ID is required'),
+    body('otp').notEmpty().withMessage('OTP is required'),
+    validate
+  ],
+  verifyWalkOtp
+);
+
 
 // @route   POST /api/tracking/start
 router.post(
