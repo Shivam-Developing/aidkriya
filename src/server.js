@@ -108,5 +108,91 @@ process.on('SIGTERM', () => {
     console.log('✅ HTTP server closed');
   });
 });
+// WebSocket setup for live tracking
+const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+
+const io = new Server(server, {
+  cors: { 
+    origin: process.env.FRONTEND_URL || '*', 
+    methods: ['GET', 'POST'] 
+  }
+});
+
+// Socket authentication middleware
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+  if (!token) return next(new Error('NO_TOKEN'));
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = decoded.id;
+    next();
+  } catch (e) {
+    next(new Error('INVALID_TOKEN'));
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.userId);
+  
+  // Join tracking session room
+  socket.on('tracking:join', ({ sessionId }) => {
+    socket.join(`session:${sessionId}`);
+    console.log(`User ${socket.userId} joined session ${sessionId}`);
+  });
+  
+  // Broadcast location updates
+  socket.on('tracking:location', async ({ sessionId, location }) => {
+    const WalkSession = require('./models/WalkSession');
+    
+    const session = await WalkSession.findById(sessionId);
+    if (!session || session.status !== 'ACTIVE') return;
+    
+    // Update session route and distance
+    session.route = session.route || [];
+    session.route.push({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      timestamp: new Date(location.timestamp)
+    });
+    
+    await session.save();
+    
+    // Broadcast to partner
+    io.to(`session:${sessionId}`).emit('tracking:partner-location', {
+      location,
+      sessionId
+    });
+  });
+  
+  // Handle SOS alerts
+  socket.on('tracking:sos', async ({ sessionId, location, reason }) => {
+    const WalkSession = require('./models/WalkSession');
+    
+    const session = await WalkSession.findById(sessionId);
+    if (!session) return;
+    
+    session.sosTriggered = true;
+    session.sosTimestamp = new Date();
+    session.sosLocation = { 
+      latitude: location?.latitude, 
+      longitude: location?.longitude 
+    };
+    await session.save();
+    
+    // Broadcast SOS to both users
+    io.to(`session:${sessionId}`).emit('tracking:sos', { 
+      sessionId, 
+      location, 
+      reason, 
+      timestamp: session.sosTimestamp 
+    });
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.userId);
+  });
+});
 
 module.exports = server;
