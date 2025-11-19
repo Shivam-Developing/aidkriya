@@ -74,6 +74,11 @@ const profileSchema = new mongoose.Schema({
     type: Boolean,
     default: true // For walkers
   },
+  emergencyContacts: [{
+  name: String,
+  phone: String
+}]
+,
   createdAt: {
     type: Date,
     default: Date.now
