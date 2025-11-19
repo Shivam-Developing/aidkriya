@@ -94,6 +94,11 @@ exports.acceptWalkRequest = async (req, res) => {
     // Update walk request
     walkRequest.walkerId = walkerId;
     walkRequest.status = 'MATCHED';
+    // Generate OTP for session start
+const otp = Math.floor(1000 + Math.random() * 9000).toString();
+walkRequest.otp = otp;
+walkRequest.otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+walkRequest.otpVerified = false;
     walkRequest.matchedAt = new Date();
     await walkRequest.save();
 
