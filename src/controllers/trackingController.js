@@ -32,6 +32,80 @@ const assertSessionParticipant = (session, userId) => {
     throw new Error('NOT_AUTHORIZED');
   }
 };
+// Get OTP for walk session (Wanderer only)
+exports.getWalkOtp = async (req, res) => {
+  try {
+    const { walkRequestId } = req.params;
+    const WalkRequest = require('../models/WalkRequest');
+    
+    const walkRequest = await WalkRequest.findById(walkRequestId);
+    
+    if (!walkRequest) {
+      return res.status(404).json({ success: false, message: 'Walk request not found' });
+    }
+    
+    // Verify requester is the wanderer
+    if (walkRequest.wandererId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    
+    if (!walkRequest.otp || !walkRequest.otpExpiresAt || walkRequest.otpExpiresAt < new Date()) {
+      return res.status(400).json({ success: false, message: 'OTP unavailable or expired' });
+    }
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: 'OTP retrieved',
+      data: { otp: walkRequest.otp }
+    });
+  } catch (error) {
+    console.error('Get OTP error:', error);
+    return res.status(500).json({ success: false, message: 'Error fetching OTP', error: error.message });
+  }
+};
+
+// Verify OTP before starting session (Walker only)
+exports.verifyWalkOtp = async (req, res) => {
+  try {
+    const { walk_request_id, otp } = req.body;
+    const WalkRequest = require('../models/WalkRequest');
+    
+    const walkRequest = await WalkRequest.findById(walk_request_id);
+    
+    if (!walkRequest) {
+      return res.status(404).json({ success: false, message: 'Walk request not found' });
+    }
+    
+    if (walkRequest.status !== 'MATCHED') {
+      return res.status(400).json({ success: false, message: 'Request not ready for OTP verification' });
+    }
+    
+    if (!walkRequest.otp || !walkRequest.otpExpiresAt || walkRequest.otpExpiresAt < new Date()) {
+      return res.status(400).json({ success: false, message: 'OTP expired' });
+    }
+    
+    if (walkRequest.otp !== otp) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
+    }
+    
+    // Mark as verified and transition to IN_PROGRESS
+    walkRequest.status = 'IN_PROGRESS';
+    walkRequest.otpVerified = true;
+    walkRequest.otp = undefined; // Clear OTP after verification
+    walkRequest.otpExpiresAt = undefined;
+    await walkRequest.save();
+    
+    return res.status(200).json({ 
+      success: true, 
+      message: 'OTP verified successfully',
+      data: { verified: true }
+    });
+  } catch (error) {
+    console.error('Verify OTP error:', error);
+    return res.status(500).json({ success: false, message: 'Error verifying OTP', error: error.message });
+  }
+};
+
 
 // @desc    Start a walk session
 // @route   POST /api/tracking/start
