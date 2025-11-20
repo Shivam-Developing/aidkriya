@@ -6,16 +6,16 @@ const {
   updateLocation,
   endWalkSession,
   getWalkSession,
-  getSessionByRequest,  // NEW - Add this import
   getPartnerLocation,
-  sendSOSAlert,
-  getWalkOtp,
-  verifyWalkOtp
+  sendSOSAlert
 } = require('../controllers/trackingController');
 const { protect } = require('../middleware/auth');
 const { validate, validators } = require('../middleware/validation');
+// Add these imports at the top with other controller imports
+const { getWalkOtp, verifyWalkOtp } = require('../controllers/trackingController');
+const { getSessionByWalkRequestId } = require('../controllers/trackingController');
 
-// OTP routes
+// Add these routes
 router.get('/otp/:walkRequestId', protect, getWalkOtp);
 
 router.post(
@@ -29,17 +29,7 @@ router.post(
   verifyWalkOtp
 );
 
-// Session routes
-// IMPORTANT: /session/by-request/:walkRequestId MUST come BEFORE /session/:sessionId
-// Otherwise Express will treat "by-request" as a sessionId
 
-// @route   GET /api/tracking/session/by-request/:walkRequestId (NEW)
-router.get('/session/by-request/:walkRequestId', protect, getSessionByRequest);
-
-// @route   GET /api/tracking/session/:sessionId
-router.get('/session/:sessionId', protect, getWalkSession);
-
-// Session management routes
 // @route   POST /api/tracking/start
 router.post(
   '/start',
@@ -77,6 +67,11 @@ router.post(
   ],
   endWalkSession
 );
+
+// @route   GET /api/tracking/session/:sessionId
+router.get('/session/:sessionId', protect, getWalkSession);
+
+router.get('/session/by-request/:walkRequestId', protect, getSessionByWalkRequestId);
 
 // @route   GET /api/tracking/partner-location/:sessionId
 router.get('/partner-location/:sessionId', protect, getPartnerLocation);
