@@ -213,6 +213,9 @@ exports.updateLocation = async (req, res) => {
     }
 
     const lastPoint = walkSession.route[walkSession.route.length - 1];
+    if (lastPoint && sanitizedPoint.timestamp.getTime() <= new Date(lastPoint.timestamp).getTime()) {
+      return errorResponse(res, 400, 'Stale location timestamp');
+    }
     let incrementalDistance = 0;
 
     if (lastPoint) {
@@ -229,14 +232,9 @@ exports.updateLocation = async (req, res) => {
       (walkSession.totalDistance + incrementalDistance).toFixed(3)
     );
 
-    const durationMinutes =
-      (new Date(sanitizedPoint.timestamp).getTime() - walkSession.startTime.getTime()) /
-      (1000 * 60);
-
-    walkSession.durationMinutes = Math.max(
-      walkSession.durationMinutes,
-      Math.round(durationMinutes)
-    );
+    const nowMs = Date.now();
+    const durationMinutes = (nowMs - walkSession.startTime.getTime()) / (1000 * 60);
+    walkSession.durationMinutes = Math.max(walkSession.durationMinutes, Math.round(durationMinutes));
 
     await walkSession.save();
 
