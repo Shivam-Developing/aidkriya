@@ -32,7 +32,6 @@ const assertSessionParticipant = (session, userId) => {
     throw new Error('NOT_AUTHORIZED');
   }
 };
-
 // Get OTP for walk session (Wanderer only)
 exports.getWalkOtp = async (req, res) => {
   try {
@@ -106,6 +105,7 @@ exports.verifyWalkOtp = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Error verifying OTP', error: error.message });
   }
 };
+
 
 // @desc    Start a walk session
 // @route   POST /api/tracking/start
@@ -371,47 +371,6 @@ exports.getWalkSession = async (req, res) => {
   }
 };
 
-// @desc    Get active walk session by walk request ID (NEW ENDPOINT)
-// @route   GET /api/tracking/session/by-request/:walkRequestId
-exports.getSessionByRequest = async (req, res) => {
-  try {
-    const { walkRequestId } = req.params;
-
-    console.log(`🔍 Looking for active session for walk request: ${walkRequestId}`);
-
-    // Find the most recent active session for this walk request
-    const walkSession = await WalkSession.findOne({
-      walkRequestId: walkRequestId,
-      status: { $in: ['ACTIVE', 'IN_PROGRESS'] }
-    })
-    .sort({ startTime: -1 }) // Get most recent
-    .populate('wandererId', 'name phone')
-    .populate('walkerId', 'name phone')
-    .limit(1);
-
-    if (!walkSession) {
-      console.log(`❌ No active session found for walk request: ${walkRequestId}`);
-      return errorResponse(res, 404, 'No active session found for this walk request');
-    }
-
-    // Verify requester is a participant
-    try {
-      assertSessionParticipant(walkSession, req.user._id);
-    } catch (error) {
-      return errorResponse(res, 403, 'Not authorized to access this session');
-    }
-
-    console.log(`✅ Found session: ${walkSession._id}`);
-
-    return successResponse(res, 200, 'Walk session retrieved', { 
-      session: walkSession 
-    });
-  } catch (error) {
-    console.error('Get session by request error:', error);
-    return errorResponse(res, 500, 'Error fetching session by request', error.message);
-  }
-};
-
 // @desc    Get partner's latest location
 // @route   GET /api/tracking/partner-location/:sessionId
 exports.getPartnerLocation = async (req, res) => {
@@ -446,6 +405,40 @@ exports.getPartnerLocation = async (req, res) => {
     }
     console.error('Get partner location error:', error);
     errorResponse(res, 500, 'Error fetching partner location', error.message);
+  }
+};
+
+exports.getSessionByWalkRequestId = async (req, res) => {
+  try {
+    const { walkRequestId } = req.params;
+
+    const walkRequest = await WalkRequest.findById(walkRequestId);
+    if (!walkRequest) {
+      return errorResponse(res, 404, 'Walk request not found');
+    }
+
+    const session = await WalkSession.findOne({
+      walkRequestId: walkRequest._id,
+      status: { $in: ['ACTIVE', 'COMPLETED'] }
+    })
+      .populate('walkRequestId')
+      .populate('wandererId', 'name phone')
+      .populate('walkerId', 'name phone')
+      .sort({ startTime: -1 });
+
+    if (!session) {
+      return errorResponse(res, 404, 'No session exists for this request');
+    }
+
+    assertSessionParticipant(session, req.user._id);
+
+    successResponse(res, 200, 'Walk session retrieved', { session });
+  } catch (error) {
+    if (error.message === 'NOT_AUTHORIZED') {
+      return errorResponse(res, 403, 'Not authorized to access this session');
+    }
+    console.error('Get session by request error:', error);
+    errorResponse(res, 500, 'Error fetching session by request', error.message);
   }
 };
 
