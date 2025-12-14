@@ -6,11 +6,10 @@ const {
   setupProfile,
   uploadVerification,
   updateAvailability,
-  updateLocation,
   getWalletBalance
 } = require('../controllers/profileController');
 const { protect, authorize } = require('../middleware/auth');
-const { validate, validators } = require('../middleware/validation');
+const { validate } = require('../middleware/validation');
 
 // @route   GET /api/profile/:userId
 router.get('/:userId', getProfile);
@@ -51,18 +50,6 @@ router.put(
     validate
   ],
   updateAvailability
-);
-
-router.put(
-  '/location',
-  protect,
-  authorize('WALKER'),
-  [
-    body('latitude').custom(validators.isValidCoordinate),
-    body('longitude').custom(validators.isValidLongitude),
-    validate
-  ],
-  updateLocation
 );
 
 // @route   GET /api/profile/wallet
