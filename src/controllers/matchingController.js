@@ -2,6 +2,7 @@ const WalkRequest = require('../models/WalkRequest');
 const Profile = require('../models/Profile');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
 const { sendNotification, notificationTemplates } = require('../utils/notificationHelper');
+const { calculateDistance } = require('../utils/calculateDistance');
 
 // @desc    Find available walkers for a walk request
 // @route   POST /api/matching/find-walkers
@@ -30,26 +31,31 @@ exports.findWalkers = async (req, res) => {
       return errorResponse(res, 404, 'No walkers available at the moment');
     }
 
-    // Calculate distance and create match objects
-    const matches = availableWalkers.map(profile => {
-      // For demo, using static location. In production, get walker's last known location
-      const distance = Math.random() * 10; // Random distance for demo
+    const radiusKm = parseFloat(req.body.radius_km) || 5;
+    const { latitude: reqLat, longitude: reqLng } = walkRequest;
 
-      return {
-        id: profile._id,
-        walk_request_id,
-        walker_id: profile.userId._id,
-        walker_name: profile.userId.name,
-        walker_image: profile.profileImage,
-        walker_rating: profile.rating,
-        total_walks: profile.totalWalks,
-        distance: parseFloat(distance.toFixed(2)),
-        status: 'PENDING'
-      };
-    }).sort((a, b) => a.distance - b.distance); // Sort by distance
+    // Calculate distance and create match objects using walker last known location
+    const matches = availableWalkers
+      .filter((profile) => typeof profile.latitude === 'number' && typeof profile.longitude === 'number')
+      .map((profile) => {
+        const distance = calculateDistance(reqLat, reqLng, profile.latitude, profile.longitude);
+        return {
+          id: profile._id,
+          walk_request_id,
+          walker_id: profile.userId._id,
+          walker_name: profile.userId.name,
+          walker_image: profile.profileImage,
+          walker_rating: profile.rating,
+          total_walks: profile.totalWalks,
+          distance: parseFloat(distance.toFixed(2)),
+          status: 'PENDING'
+        };
+      })
+      .filter((m) => m.distance <= radiusKm)
+      .sort((a, b) => a.distance - b.distance);
 
     // Notify nearby walkers
-    const notifyWalkers = matches.slice(0, 5); // Notify top 5 closest
+    const notifyWalkers = matches.slice(0, 5); // Notify top 5 closest within radius
     for (const match of notifyWalkers) {
       const notification = notificationTemplates.walkRequestReceived(req.user.name);
       await sendNotification(
@@ -91,6 +97,11 @@ exports.acceptWalkRequest = async (req, res) => {
       return errorResponse(res, 400, 'Walk request is no longer available');
     }
 
+    // Ensure this walker is the one requested
+    if (walkRequest.walkerId && walkRequest.walkerId.toString() !== walkerId.toString()) {
+      return errorResponse(res, 403, 'This request is not assigned to you');
+    }
+
     // Update walk request
     walkRequest.walkerId = walkerId;
     walkRequest.status = 'MATCHED';
@@ -118,7 +129,7 @@ walkRequest.otpVerified = false;
       walk_request_id: walkRequest._id,
       walker_id: walkerId,
       wanderer_id: walkRequest.wandererId,
-      status: walkRequest.status,
+      status:  walkRequest.status, 
       matched_at: walkRequest.matchedAt
     };
 
@@ -152,14 +163,11 @@ exports.rejectWalkRequest = async (req, res) => {
 exports.getPendingRequests = async (req, res) => {
   try {
     const { walkerId } = req.params;
-
-    // Get walker's profile to find nearby requests
-    const walkerProfile = await Profile.findOne({ userId: walkerId });
-
-    // Get pending walk requests
+    // Only show requests explicitly targeted to this walker
     const pendingRequests = await WalkRequest.find({
       status: 'PENDING',
-      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // Last 24 hours
+      walkerId: walkerId,
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
     })
       .populate('wandererId', 'name phone')
       .limit(10)
@@ -177,7 +185,12 @@ exports.getPendingRequests = async (req, res) => {
         walker_image: wandererProfile?.profileImage || '',
         walker_rating: wandererProfile?.rating || 0,
         total_walks: wandererProfile?.totalWalks || 0,
-        distance: Math.random() * 10, // Mock distance
+        distance: calculateDistance(
+          request.latitude,
+          request.longitude,
+          wandererProfile?.latitude ?? request.latitude,
+          wandererProfile?.longitude ?? request.longitude
+        ),
         status: 'PENDING'
       };
     }));
@@ -186,5 +199,40 @@ exports.getPendingRequests = async (req, res) => {
   } catch (error) {
     console.error('Get pending requests error:', error);
     errorResponse(res, 500, 'Error fetching pending requests', error.message);
+  }
+};
+
+// @desc    Assign a specific walker to a walk request (Wanderer action)
+// @route   POST /api/matching/request
+// @access  Private (Wanderer only)
+exports.requestWalker = async (req, res) => {
+  try {
+    const { walk_request_id, walker_id } = req.body;
+    const walkRequest = await WalkRequest.findById(walk_request_id);
+    if (!walkRequest) {
+      return errorResponse(res, 404, 'Walk request not found');
+    }
+
+    if (walkRequest.status !== 'PENDING') {
+      return errorResponse(res, 400, 'Walk request is not available');
+    }
+
+    // Assign walker and keep status as PENDING until walker accepts
+    walkRequest.walkerId = walker_id;
+    await walkRequest.save();
+
+    const notification = notificationTemplates.walkRequestReceived(req.user.name);
+    await sendNotification(
+      walker_id,
+      notification.title,
+      notification.message,
+      { walkRequestId: walk_request_id },
+      { type: notification.type, relatedId: walk_request_id, relatedModel: 'WalkRequest' }
+    );
+
+    successResponse(res, 200, 'Walker requested successfully');
+  } catch (error) {
+    console.error('Request walker error:', error);
+    errorResponse(res, 500, 'Error requesting walker', error.message);
   }
 };
