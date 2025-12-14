@@ -147,6 +147,39 @@ exports.updateAvailability = async (req, res) => {
   }
 };
 
+// @desc    Update walker location
+// @route   PUT /api/profile/location
+// @access  Private (Walker only)
+exports.updateLocation = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { latitude, longitude, locationUpdatedAt } = req.body;
+
+    const profile = await Profile.findOne({ userId });
+
+    if (!profile) {
+      return errorResponse(res, 404, 'Profile not found');
+    }
+
+    profile.latitude = Number(latitude);
+    profile.longitude = Number(longitude);
+    profile.locationUpdatedAt = locationUpdatedAt
+      ? new Date(locationUpdatedAt)
+      : new Date();
+
+    await profile.save();
+
+    successResponse(res, 200, 'Location updated successfully', {
+      latitude: profile.latitude,
+      longitude: profile.longitude,
+      locationUpdatedAt: profile.locationUpdatedAt
+    });
+  } catch (error) {
+    console.error('Update location error:', error);
+    errorResponse(res, 500, 'Error updating location', error.message);
+  }
+};
+
 // @desc    Get wallet balance
 // @route   GET /api/profile/wallet
 // @access  Private
