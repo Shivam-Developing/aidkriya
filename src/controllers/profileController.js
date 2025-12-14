@@ -147,6 +147,9 @@ exports.updateAvailability = async (req, res) => {
   }
 };
 
+// @desc    Update walker location
+// @route   PUT /api/profile/location
+// @access  Private (Walker only)
 exports.updateLocation = async (req, res) => {
   try {
     const userId = req.user._id;
