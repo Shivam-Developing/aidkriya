@@ -7,6 +7,15 @@ const profileSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
+   latitude: {
+    type: Number
+  },
+  longitude: {
+    type: Number
+  },
+  locationUpdatedAt: {
+    type: Date
+  },
   name: {
     type: String,
     required: true
