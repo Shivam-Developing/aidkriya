@@ -24,7 +24,7 @@ exports.findWalkers = async (req, res) => {
 
     // Filter walkers by role
     const availableWalkers = walkerProfiles.filter(
-      profile => profile.userId.role === 'WALKER'
+      profile => profile.userId && profile.userId.role === 'WALKER'
     );
 
     if (availableWalkers.length === 0) {
@@ -34,11 +34,19 @@ exports.findWalkers = async (req, res) => {
     const radiusKm = parseFloat(req.body.radius_km) || 5;
     const { latitude: reqLat, longitude: reqLng } = walkRequest;
 
-    // Calculate distance and create match objects using walker last known location
+    // Calculate distance for walkers WITH location, assign large distance for those WITHOUT
     const matches = availableWalkers
-      .filter((profile) => typeof profile.latitude === 'number' && typeof profile.longitude === 'number')
       .map((profile) => {
-        const distance = calculateDistance(reqLat, reqLng, profile.latitude, profile.longitude);
+        let distance;
+        
+        // Check if walker has valid location
+        if (typeof profile.latitude === 'number' && typeof profile.longitude === 'number') {
+          distance = calculateDistance(reqLat, reqLng, profile.latitude, profile.longitude);
+        } else {
+          // Assign large distance for walkers without location (they'll appear at the end)
+          distance = 9999;
+        }
+
         return {
           id: profile._id,
           walk_request_id,
@@ -47,12 +55,22 @@ exports.findWalkers = async (req, res) => {
           walker_image: profile.profileImage,
           walker_rating: profile.rating,
           total_walks: profile.totalWalks,
-          distance: parseFloat(distance.toFixed(2)),
+          distance: distance === 9999 ? null : parseFloat(distance.toFixed(2)), // Show null for unknown distance
           status: 'PENDING'
         };
       })
-      .filter((m) => m.distance <= radiusKm)
-      .sort((a, b) => a.distance - b.distance);
+      .filter((m) => m.distance === null || m.distance <= radiusKm) // Include walkers without location OR within radius
+      .sort((a, b) => {
+        // Sort: walkers with location first (by distance), then walkers without location
+        if (a.distance === null && b.distance === null) return 0;
+        if (a.distance === null) return 1; // a goes after b
+        if (b.distance === null) return -1; // b goes after a
+        return a.distance - b.distance;
+      });
+
+    if (matches.length === 0) {
+      return errorResponse(res, 404, 'No walkers found within the specified radius');
+    }
 
     // Notify nearby walkers
     const notifyWalkers = matches.slice(0, 5); // Notify top 5 closest within radius
@@ -105,11 +123,12 @@ exports.acceptWalkRequest = async (req, res) => {
     // Update walk request
     walkRequest.walkerId = walkerId;
     walkRequest.status = 'MATCHED';
+    
     // Generate OTP for session start
-const otp = Math.floor(1000 + Math.random() * 9000).toString();
-walkRequest.otp = otp;
-walkRequest.otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-walkRequest.otpVerified = false;
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    walkRequest.otp = otp;
+    walkRequest.otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    walkRequest.otpVerified = false;
     walkRequest.matchedAt = new Date();
     await walkRequest.save();
 
@@ -129,8 +148,9 @@ walkRequest.otpVerified = false;
       walk_request_id: walkRequest._id,
       walker_id: walkerId,
       wanderer_id: walkRequest.wandererId,
-      status:  walkRequest.status, 
-      matched_at: walkRequest.matchedAt
+      status: walkRequest.status,
+      matched_at: walkRequest.matchedAt,
+      otp: otp
     };
 
     successResponse(res, 200, 'Walk request accepted successfully', match);
@@ -163,6 +183,7 @@ exports.rejectWalkRequest = async (req, res) => {
 exports.getPendingRequests = async (req, res) => {
   try {
     const { walkerId } = req.params;
+    
     // Only show requests explicitly targeted to this walker
     const pendingRequests = await WalkRequest.find({
       status: 'PENDING',
@@ -181,16 +202,22 @@ exports.getPendingRequests = async (req, res) => {
         id: request._id,
         walk_request_id: request._id,
         walker_id: walkerId,
-        walker_name: wandererProfile?.name || request.wandererId.name,
-        walker_image: wandererProfile?.profileImage || '',
-        walker_rating: wandererProfile?.rating || 0,
-        total_walks: wandererProfile?.totalWalks || 0,
-        distance: calculateDistance(
-          request.latitude,
-          request.longitude,
-          wandererProfile?.latitude ?? request.latitude,
-          wandererProfile?.longitude ?? request.longitude
-        ),
+        wanderer_name: wandererProfile?.name || request.wandererId.name,
+        wanderer_image: wandererProfile?.profileImage || '',
+        wanderer_phone: request.wandererId.phone,
+        address: request.address,
+        duration: request.durationMinutes,
+        pace: request.pace,
+        conversation: request.conversationLevel,
+        languages: request.languages,
+        distance: wandererProfile?.latitude && wandererProfile?.longitude 
+          ? calculateDistance(
+              request.latitude,
+              request.longitude,
+              wandererProfile.latitude,
+              wandererProfile.longitude
+            )
+          : null,
         status: 'PENDING'
       };
     }));
@@ -208,7 +235,9 @@ exports.getPendingRequests = async (req, res) => {
 exports.requestWalker = async (req, res) => {
   try {
     const { walk_request_id, walker_id } = req.body;
+    
     const walkRequest = await WalkRequest.findById(walk_request_id);
+    
     if (!walkRequest) {
       return errorResponse(res, 404, 'Walk request not found');
     }
@@ -221,6 +250,7 @@ exports.requestWalker = async (req, res) => {
     walkRequest.walkerId = walker_id;
     await walkRequest.save();
 
+    // Notify the specific walker
     const notification = notificationTemplates.walkRequestReceived(req.user.name);
     await sendNotification(
       walker_id,
@@ -230,7 +260,11 @@ exports.requestWalker = async (req, res) => {
       { type: notification.type, relatedId: walk_request_id, relatedModel: 'WalkRequest' }
     );
 
-    successResponse(res, 200, 'Walker requested successfully');
+    successResponse(res, 200, 'Walker requested successfully', {
+      walk_request_id,
+      walker_id,
+      status: 'PENDING'
+    });
   } catch (error) {
     console.error('Request walker error:', error);
     errorResponse(res, 500, 'Error requesting walker', error.message);
