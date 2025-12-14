@@ -5,7 +5,8 @@ const {
   findWalkers,
   acceptWalkRequest,
   rejectWalkRequest,
-  getPendingRequests
+  getPendingRequests,
+  requestWalker
 } = require('../controllers/matchingController');
 const { protect, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
@@ -52,6 +53,19 @@ router.get(
   protect,
   authorize('WALKER'),
   getPendingRequests
+);
+
+// @route   POST /api/matching/request
+router.post(
+  '/request',
+  protect,
+  authorize('WANDERER'),
+  [
+    body('walk_request_id').notEmpty().withMessage('Walk request ID is required'),
+    body('walker_id').notEmpty().withMessage('Walker ID is required'),
+    validate
+  ],
+  requestWalker
 );
 
 module.exports = router;
