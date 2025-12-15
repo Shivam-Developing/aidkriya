@@ -425,6 +425,15 @@ exports.getSessionByWalkRequestId = async (req, res) => {
       return errorResponse(res, 404, 'Walk request not found');
     }
 
+    // Explicit authorization: requester must be the wanderer or the assigned walker of this request
+    const isAuthorized =
+      walkRequest.wandererId?.toString() === req.user._id.toString() ||
+      (walkRequest.walkerId && walkRequest.walkerId.toString() === req.user._id.toString());
+
+    if (!isAuthorized) {
+      return errorResponse(res, 403, 'Not authorized to access this session');
+    }
+
     const session = await WalkSession.findOne({
       walkRequestId: walkRequest._id,
       status: { $in: ['ACTIVE', 'COMPLETED'] }
@@ -437,8 +446,6 @@ exports.getSessionByWalkRequestId = async (req, res) => {
     if (!session) {
       return errorResponse(res, 404, 'No session exists for this request');
     }
-
-    assertSessionParticipant(session, req.user._id);
 
     successResponse(res, 200, 'Walk session retrieved', { session });
   } catch (error) {
