@@ -42,6 +42,8 @@ const walkSessionSchema = new mongoose.Schema({
     type: Date
   },
   route: [locationPointSchema],
+  lastWandererLocation: locationPointSchema,
+  lastWalkerLocation: locationPointSchema,
   totalDistance: {
     type: Number, // in kilometers
     default: 0
