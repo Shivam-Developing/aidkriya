@@ -236,6 +236,13 @@ exports.updateLocation = async (req, res) => {
     const durationMinutes = (nowMs - walkSession.startTime.getTime()) / (1000 * 60);
     walkSession.durationMinutes = Math.max(walkSession.durationMinutes, Math.round(durationMinutes));
 
+    // Save last location per participant
+    if (walkSession.walkerId.toString() === req.user._id.toString()) {
+      walkSession.lastWalkerLocation = sanitizedPoint;
+    } else if (walkSession.wandererId.toString() === req.user._id.toString()) {
+      walkSession.lastWandererLocation = sanitizedPoint;
+    }
+
     await walkSession.save();
 
     successResponse(res, 200, 'Location updated', {
@@ -388,10 +395,13 @@ exports.getPartnerLocation = async (req, res) => {
         ? walkSession.walkerId
         : walkSession.wandererId;
 
-    const latestLocation =
-      Array.isArray(walkSession.route) && walkSession.route.length > 0
-        ? walkSession.route[walkSession.route.length - 1]
-        : null;
+    let latestLocation = null;
+    const requesterIsWanderer = walkSession.wandererId.toString() === req.user._id.toString();
+    if (requesterIsWanderer) {
+      latestLocation = walkSession.lastWalkerLocation || null;
+    } else {
+      latestLocation = walkSession.lastWandererLocation || null;
+    }
 
     successResponse(res, 200, 'Partner location retrieved', {
       partner_id: partnerId,
