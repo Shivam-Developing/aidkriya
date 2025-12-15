@@ -34,7 +34,9 @@ exports.setupProfile = async (req, res) => {
       age,
       profileImage,
       additionalImages,
-      preferences
+      preferences,
+      latitude,
+      longitude
     } = req.body;
 
     // Find or create profile
@@ -53,6 +55,9 @@ exports.setupProfile = async (req, res) => {
           ...preferences
         };
       }
+      if (latitude !== undefined) profile.latitude = latitude;
+      if (longitude !== undefined) profile.longitude = longitude;
+      if (latitude !== undefined || longitude !== undefined) profile.locationUpdatedAt = new Date();
 
       await profile.save();
     } else {
@@ -64,7 +69,10 @@ exports.setupProfile = async (req, res) => {
         age,
         profileImage,
         additionalImages,
-        preferences
+        preferences,
+        latitude,
+        longitude,
+        locationUpdatedAt: latitude !== undefined || longitude !== undefined ? new Date() : undefined
       });
     }
 
