@@ -1,58 +1,103 @@
-const express = require('express');
-const router = express.Router();
-const { body } = require('express-validator');
-const {
-  getProfile,
-  setupProfile,
-  uploadVerification,
-  updateAvailability,
-  getWalletBalance
-} = require('../controllers/profileController');
-const { protect, authorize } = require('../middleware/auth');
-const { validate } = require('../middleware/validation');
+const mongoose = require('mongoose');
 
-// @route   GET /api/profile/:userId
-router.get('/:userId', getProfile);
+const profileSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  latitude: {
+    type: Number
+  },
+  longitude: {
+    type: Number
+  },
+  locationUpdatedAt: {
+    type: Date
+  },
+  name: {
+    type: String,
+    required: true
+  },
+  bio: {
+    type: String,
+    maxlength: 500
+  },
+  age: {
+    type: Number,
+    min: 18,
+    max: 100
+  },
+  profileImage: {
+    type: String,
+    default: 'https://via.placeholder.com/150'
+  },
+  additionalImages: [{
+    type: String
+  }],
+  preferences: {
+    pace: {
+      type: String,
+      enum: ['Slow', 'Moderate', 'Fast', 'Very Fast'],
+      default: 'Moderate'
+    },
+    conversationLevel: {
+      type: String,
+      enum: ['Silent', 'Light', 'Moderate', 'Chatty'],
+      default: 'Light'
+    },
+    languages: [{
+      type: String
+    }]
+  },
+  verification: {
+    isVerified: {
+      type: Boolean,
+      default: false
+    },
+    documentType: String,
+    documentNumber: String,
+    documentImage: String,
+    verifiedAt: Date
+  },
+  rating: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 5
+  },
+  totalWalks: {
+    type: Number,
+    default: 0
+  },
+  totalEarnings: {
+    type: Number,
+    default: 0
+  },
+  walletBalance: {
+    type: Number,
+    default: 0
+  },
+  isAvailable: {
+    type: Boolean,
+    default: true // For walkers
+  },
+  emergencyContacts: [{
+  name: String,
+  phone: String
+}]
+,
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  timestamps: true
+});
 
-// @route   PUT /api/profile/setup
-router.put(
-  '/setup',
-  protect,
-  [
-    body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
-    body('age').optional().isInt({ min: 18, max: 100 }).withMessage('Age must be between 18 and 100'),
-    body('bio').optional().isLength({ max: 500 }).withMessage('Bio must be less than 500 characters'),
-    validate
-  ],
-  setupProfile
-);
-
-// @route   POST /api/profile/verification
-router.post(
-  '/verification',
-  protect,
-  [
-    body('documentType').notEmpty().withMessage('Document type is required'),
-    body('documentNumber').notEmpty().withMessage('Document number is required'),
-    body('documentImage').notEmpty().withMessage('Document image is required'),
-    validate
-  ],
-  uploadVerification
-);
-
-// @route   PUT /api/profile/availability
-router.put(
-  '/availability',
-  protect,
-  authorize('WALKER'),
-  [
-    body('isAvailable').isBoolean().withMessage('Availability must be a boolean'),
-    validate
-  ],
-  updateAvailability
-);
-
-// @route   GET /api/profile/wallet
-router.get('/wallet', protect, getWalletBalance);
-
-module.exports = router;
+module.exports = mongoose.model('Profile', profileSchema);
