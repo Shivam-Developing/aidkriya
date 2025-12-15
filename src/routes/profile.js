@@ -22,6 +22,8 @@ router.put(
     body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
     body('age').optional().isInt({ min: 18, max: 100 }).withMessage('Age must be between 18 and 100'),
     body('bio').optional().isLength({ max: 500 }).withMessage('Bio must be less than 500 characters'),
+    body('latitude').optional().isFloat({ min: -90, max: 90 }).withMessage('Invalid latitude'),
+    body('longitude').optional().isFloat({ min: -180, max: 180 }).withMessage('Invalid longitude'),
     validate
   ],
   setupProfile
