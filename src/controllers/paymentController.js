@@ -57,11 +57,16 @@ exports.createPaymentOrder = async (req, res) => {
         }
       : calculateFare(walkSession.durationMinutes || 0);
 
-    // Create Razorpay order
+    // Create Razorpay order with safe receipt length (<= 40 chars)
+    const baseReceipt = `WLK_${walk_session_id}`;
+    const safeReceipt = baseReceipt.length > 40
+      ? baseReceipt.substring(0, 40)
+      : baseReceipt;
+
     const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(fareDetails.totalAmount * 100), // paise
+      amount: Math.round(fareDetails.totalAmount * 100),
       currency: 'INR',
-      receipt: `order_${walk_session_id}_${Date.now()}`,
+      receipt: safeReceipt,
       notes: {
         walk_session_id,
         wanderer_id: walkSession.wandererId.toString(),
