@@ -101,6 +101,16 @@ const notificationTemplates = {
     message: 'Great job! Your walk is complete. Please rate your experience.',
     type: 'WALK_COMPLETED'
   }),
+  partnerEndRequested: () => ({
+    title: 'End Requested',
+    message: 'Your partner requested to end the walk.',
+    type: 'WALK_END_REQUESTED'
+  }),
+  paymentPending: () => ({
+    title: 'Payment Pending',
+    message: 'Walk finalized. Review summary and complete payment.',
+    type: 'PAYMENT_PENDING'
+  }),
   
   paymentSuccess: (amount) => ({
     title: 'Payment Successful',
