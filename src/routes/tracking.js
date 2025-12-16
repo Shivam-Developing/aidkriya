@@ -7,7 +7,8 @@ const {
   endWalkSession,
   getWalkSession,
   getPartnerLocation,
-  sendSOSAlert
+  sendSOSAlert,
+  getPaymentSummary
 } = require('../controllers/trackingController');
 const { protect } = require('../middleware/auth');
 const { validate, validators } = require('../middleware/validation');
@@ -71,10 +72,14 @@ router.post(
 // @route   GET /api/tracking/session/:sessionId
 router.get('/session/:sessionId', protect, getWalkSession);
 
+// @route   GET /api/tracking/session/by-request/:walkRequestId
 router.get('/session/by-request/:walkRequestId', protect, getSessionByWalkRequestId);
 
 // @route   GET /api/tracking/partner-location/:sessionId
 router.get('/partner-location/:sessionId', protect, getPartnerLocation);
+
+// @route   GET /api/tracking/payment-summary/:sessionId
+router.get('/payment-summary/:sessionId', protect, getPaymentSummary);
 
 // @route   POST /api/tracking/sos-alert
 router.post(
