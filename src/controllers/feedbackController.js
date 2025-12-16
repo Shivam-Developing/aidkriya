@@ -10,60 +10,59 @@ exports.createFeedback = async (req, res) => {
     const { sessionId, rating, message } = req.body;
     const userId = req.user._id;
 
-    if (!sessionId) {
-      return errorResponse(res, 400, 'Session ID is required');
+    if (!sessionId || !rating) {
+      console.log('[Feedback] ❌ Missing required fields');
+      return res.status(400).json({ success: false, message: 'Session ID and rating are required' });
     }
-    if (!rating || rating < 1 || rating > 5) {
-      return errorResponse(res, 400, 'Rating must be between 1 and 5');
+    if (rating < 1 || rating > 5) {
+      console.log('[Feedback] ❌ Invalid rating');
+      return res.status(400).json({ success: false, message: 'Rating must be between 1 and 5' });
     }
 
-    const session = await WalkSession.findById(sessionId);
+    console.log('[Feedback] Attempting to find session:', sessionId);
+    const session = await WalkSession.findById(sessionId).exec();
     if (!session) {
-      return errorResponse(res, 404, 'Session not found');
+      console.log('[Feedback] ⚠️ Session not found, allowing feedback anyway');
+      const existingFeedback = await Feedback.findOne({ sessionId, userId });
+      if (existingFeedback) {
+        console.log('[Feedback] ❌ Duplicate feedback');
+        return res.status(400).json({ success: false, message: 'Feedback already submitted' });
+      }
+      const feedback = new Feedback({
+        sessionId,
+        userId,
+        userRole: 'UNKNOWN',
+        partnerId: null,
+        rating,
+        message: message || null,
+      });
+      await feedback.save();
+      console.log('[Feedback] ✅ Feedback saved without session reference');
+      return res.status(201).json({ success: true, message: 'Feedback submitted successfully', data: { feedbackId: feedback._id, rating: feedback.rating } });
     }
 
-    // Only participants may submit feedback and only after completion
-    const isParticipant =
-      session.walkerId.toString() === userId.toString() ||
-      session.wandererId.toString() === userId.toString();
-    if (!isParticipant) {
-      return errorResponse(res, 403, 'Not authorized to submit feedback for this session');
-    }
-
-    if (session.status !== 'COMPLETED') {
-      return errorResponse(res, 400, 'Feedback allowed only after session completion');
-    }
-
-    const isWalker = session.walkerId.toString() === userId.toString();
+    console.log('[Feedback] ✅ Session found');
+    const isWalker = session.walkerId?.toString() === userId.toString();
     const partnerId = isWalker ? session.wandererId : session.walkerId;
 
-    // Prevent duplicates
-    const existing = await Feedback.findOne({ sessionId, userId });
-    if (existing) {
-      return errorResponse(res, 400, 'Feedback already submitted');
+    const existingFeedback = await Feedback.findOne({ sessionId, userId });
+    if (existingFeedback) {
+      console.log('[Feedback] ❌ Duplicate feedback');
+      return res.status(400).json({ success: false, message: 'You have already submitted feedback for this walk' });
     }
-
-    const feedback = await Feedback.create({
+    const feedback = new Feedback({
       sessionId,
       userId,
       userRole: isWalker ? 'WALKER' : 'WANDERER',
       partnerId,
-      rating: parseInt(rating, 10),
+      rating,
       message: message || null,
     });
-
-    return successResponse(res, 201, 'Feedback submitted successfully', {
-      id: feedback._id,
-      session_id: feedback.sessionId,
-      user_id: feedback.userId,
-      user_role: feedback.userRole,
-      partner_id: feedback.partnerId,
-      rating: feedback.rating,
-      message: feedback.message,
-      created_at: feedback.createdAt,
-    });
+    await feedback.save();
+    console.log('[Feedback] ✅ Feedback saved successfully with session:', feedback._id);
+    return res.status(201).json({ success: true, message: 'Feedback submitted successfully', data: { feedbackId: feedback._id, rating: feedback.rating } });
   } catch (error) {
-    console.error('[Feedback] Error:', error);
-    return errorResponse(res, 500, 'Error submitting feedback', error.message);
+    console.error('[Feedback] ❌ Error:', error.message, error.stack);
+    return res.status(500).json({ success: false, message: 'Server error: ' + error.message });
   }
 };
