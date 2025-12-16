@@ -3,6 +3,9 @@ const Feedback = require('../models/Feedback');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
 
 exports.createFeedback = async (req, res) => {
+  console.log('[Feedback] ENDPOINT HIT - Request received');
+  console.log('[Feedback] User ID:', req.user?._id || req.user?.id);
+  console.log('[Feedback] Body:', req.body);
   try {
     const { sessionId, rating, message } = req.body;
     const userId = req.user._id;
@@ -64,4 +67,3 @@ exports.createFeedback = async (req, res) => {
     return errorResponse(res, 500, 'Error submitting feedback', error.message);
   }
 };
-
