@@ -46,7 +46,8 @@ app.get('/', (req, res) => {
       matching: '/api/matching',
       tracking: '/api/tracking',
       payment: '/api/payment',
-      rating: '/api/rating'
+      rating: '/api/rating',
+      feedback: '/api/feedback'
     }
   });
 });
@@ -59,6 +60,7 @@ app.use('/api/matching', require('./routes/matching'));
 app.use('/api/tracking', require('./routes/tracking'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/rating', require('./routes/rating'));
+app.use('/api/feedback', require('./routes/feedback'));
 app.use('/api/notifications', require('./routes/notification'));
 
 // Convenience aliases without /api prefix to support existing Flutter calls
@@ -70,6 +72,7 @@ app.use('/matching', require('./routes/matching'));
 app.use('/tracking', require('./routes/tracking'));
 app.use('/payment', require('./routes/payment'));
 app.use('/rating', require('./routes/rating'));
+app.use('/feedback', require('./routes/feedback'));
 app.use('/notifications', require('./routes/notification'));
 
 // Error handlers (must be last)
