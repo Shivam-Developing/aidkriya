@@ -12,9 +12,18 @@ const { sendNotification, notificationTemplates } = require('../utils/notificati
 // @access  Private
 exports.createPaymentOrder = async (req, res) => {
   try {
-    const { walk_session_id, total_amount, platform_commission, walker_earnings } = req.body;
+    const { walk_session_id } = req.body;
+
+    // Ensure Razorpay credentials are configured
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      return errorResponse(res, 500, 'Payment gateway not configured');
+    }
 
     // Validate walk session
+    if (!walk_session_id) {
+      return errorResponse(res, 400, 'Walk session ID is required');
+    }
+
     const walkSession = await WalkSession.findById(walk_session_id);
 
     if (!walkSession) {
@@ -39,12 +48,18 @@ exports.createPaymentOrder = async (req, res) => {
       return errorResponse(res, 400, 'Payment already exists for this session');
     }
 
-    // Calculate fare if not provided
-    const fareDetails = calculateFare(walkSession.durationMinutes);
+    // Calculate fare from session if available, else compute
+    const fareDetails = walkSession.fareTotalAmount
+      ? {
+          totalAmount: walkSession.fareTotalAmount,
+          platformCommission: walkSession.farePlatformCommission,
+          walkerEarnings: walkSession.fareWalkerEarnings
+        }
+      : calculateFare(walkSession.durationMinutes || 0);
 
     // Create Razorpay order
     const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(fareDetails.totalAmount * 100), // Convert to paise
+      amount: Math.round(fareDetails.totalAmount * 100), // paise
       currency: 'INR',
       receipt: `order_${walk_session_id}_${Date.now()}`,
       notes: {
@@ -72,13 +87,15 @@ exports.createPaymentOrder = async (req, res) => {
       amount: fareDetails.totalAmount,
       currency: 'INR',
       payment_id: payment._id,
+      key_id: process.env.RAZORPAY_KEY_ID,
       total_amount: fareDetails.totalAmount,
       platform_commission: fareDetails.platformCommission,
       walker_earnings: fareDetails.walkerEarnings
     });
   } catch (error) {
     console.error('Create payment order error:', error);
-    errorResponse(res, 500, 'Error creating payment order', error.message);
+    const message = error?.message || 'Error creating payment order';
+    errorResponse(res, 500, message);
   }
 };
 
