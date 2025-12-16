@@ -43,7 +43,7 @@ const walkRequestSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['PENDING', 'MATCHED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
+    enum: ['PENDING', 'MATCHED', 'IN_PROGRESS', 'PAYMENT_PENDING', 'COMPLETED', 'CANCELLED'],
     default: 'PENDING'
   },
   walkerId: {
