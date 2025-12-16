@@ -561,3 +561,82 @@ exports.sendSOSAlert = async (req, res) => {
     errorResponse(res, 500, 'Error sending SOS alert', error.message);
   }
 };
+
+// Update walker arrival location before session starts
+exports.updateWalkerArrivalLocation = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { latitude, longitude, accuracy, heading, speed } = req.body;
+    const walkerId = req.user._id;
+
+    const walkRequest = await WalkRequest.findById(requestId);
+    if (!walkRequest) {
+      return res.status(404).json({ success: false, message: 'Walk request not found' });
+    }
+
+    if (!walkRequest.walkerId || walkRequest.walkerId.toString() !== walkerId.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    walkRequest.walkerCurrentLocation = {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+      accuracy,
+      heading,
+      speed,
+      timestamp: new Date()
+    };
+
+    await walkRequest.save();
+
+    console.log(`[Location] Walker ${walkerId} updated for request ${requestId}`);
+    return res.status(200).json({ success: true, message: 'Location updated' });
+  } catch (error) {
+    console.error('[Location] Error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get partner location by walk request (pre-session)
+exports.getPartnerLocationByRequest = async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const userId = req.user._id;
+
+    const walkRequest = await WalkRequest.findById(requestId);
+    if (!walkRequest) {
+      return res.status(404).json({ success: false, message: 'Walk request not found' });
+    }
+
+    const isWanderer = walkRequest.wandererId?.toString() === userId.toString();
+    const isWalker = walkRequest.walkerId?.toString() === userId.toString();
+
+    if (!isWanderer && !isWalker) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+
+    if (isWanderer) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          partnerId: walkRequest.walkerId,
+          location: walkRequest.walkerCurrentLocation || null
+        }
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        partnerId: walkRequest.wandererId,
+        location: {
+          latitude: walkRequest.latitude,
+          longitude: walkRequest.longitude,
+          timestamp: walkRequest.createdAt
+        }
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
