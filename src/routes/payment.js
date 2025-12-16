@@ -17,7 +17,18 @@ router.post(
   '/create-order',
   protect,
   [
-    body('walk_session_id').notEmpty().withMessage('Walk session ID is required'),
+    body().custom((value, { req }) => {
+      const sid =
+        req.body.walk_session_id ||
+        req.body.walkSessionId ||
+        req.body.sessionId;
+      if (!sid) {
+        throw new Error('Walk session ID is required');
+      }
+      // Normalize to snake_case for controller consumption
+      req.body.walk_session_id = sid;
+      return true;
+    }),
     validate
   ],
   createPaymentOrder
@@ -28,7 +39,17 @@ router.post(
   '/verify',
   protect,
   [
-    body('walk_session_id').notEmpty().withMessage('Walk session ID is required'),
+    body().custom((value, { req }) => {
+      const sid =
+        req.body.walk_session_id ||
+        req.body.walkSessionId ||
+        req.body.sessionId;
+      if (!sid) {
+        throw new Error('Walk session ID is required');
+      }
+      req.body.walk_session_id = sid;
+      return true;
+    }),
     body('razorpay_payment_id').notEmpty().withMessage('Razorpay payment ID is required'),
     body('razorpay_order_id').notEmpty().withMessage('Razorpay order ID is required'),
     body('razorpay_signature').notEmpty().withMessage('Razorpay signature is required'),
