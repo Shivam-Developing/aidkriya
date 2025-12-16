@@ -1,106 +1,51 @@
-const mongoose = require('mongoose');
+const express = require('express');
+const router = express.Router();
+const { body } = require('express-validator');
+const {
+  createWalkRequest,
+  getWalkRequest,
+  cancelWalkRequest,
+  getWalkHistory,
+  getActiveWalkRequest
+} = require('../controllers/walkRequestController');
+const { protect, authorize } = require('../middleware/auth');
+const { validate, validators } = require('../middleware/validation');
 
-const walkRequestSchema = new mongoose.Schema({
-  wandererId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  latitude: {
-    type: Number,
-    required: true
-  },
-  longitude: {
-    type: Number,
-    required: true
-  },
-  address: {
-    type: String,
-    required: true
-  },
-  durationMinutes: {
-    type: Number,
-    required: true,
-    min: 15,
-    max: 240
-  },
-  pace: {
-    type: String,
-    enum: ['Slow', 'Moderate', 'Fast', 'Very Fast'],
-    required: true
-  },
-  conversationLevel: {
-    type: String,
-    enum: ['Silent', 'Light', 'Moderate', 'Chatty'],
-    required: true
-  },
-  languages: [{
-    type: String
-  }],
-  specialRequirements: {
-    type: String,
-    maxlength: 500
-  },
-  status: {
-    type: String,
-    enum: ['PENDING', 'MATCHED', 'IN_PROGRESS', 'PAYMENT_PENDING', 'COMPLETED', 'CANCELLED'],
-    default: 'PENDING'
-  },
-  walkerId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  scheduledFor: {
-    type: Date
-  },
-  matchedAt: {
-    type: Date
-  },
-  startedAt: {
-    type: Date
-  },
-  completedAt: {
-    type: Date
-  },
-  cancelledAt: {
-    type: Date
-  },
-  otp: {
-  type: String
-},
-otpExpiresAt: {
-  type: Date
-},
-  otpVerified: {
-    type: Boolean,
-    default: false
-  }
-,
-  walkerCurrentLocation: {
-    latitude: Number,
-    longitude: Number,
-    accuracy: Number,
-    heading: Number,
-    speed: Number,
-    timestamp: Date
-  },
-  cancellationReason: {
-    type: String
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
-}, {
-  timestamps: true
-});
+// @route   POST /api/walk-request/create
+router.post(
+  '/create',
+  protect,
+  authorize('WANDERER'),
+  [
+    body('latitude').custom(validators.isValidCoordinate),
+    body('longitude').custom(validators.isValidLongitude),
+    body('address').notEmpty().withMessage('Address is required'),
+    body('durationMinutes').isInt({ min: 15, max: 240 }).withMessage('Duration must be between 15 and 240 minutes'),
+    body('pace').isIn(['Slow', 'Moderate', 'Fast', 'Very Fast']).withMessage('Invalid pace'),
+    body('conversationLevel').isIn(['Silent', 'Light', 'Moderate', 'Chatty']).withMessage('Invalid conversation level'),
+    validate
+  ],
+  createWalkRequest
+);
 
-// Index for geospatial queries
-walkRequestSchema.index({ latitude: 1, longitude: 1 });
-walkRequestSchema.index({ status: 1, createdAt: -1 });
+// @route   GET /api/walk-request/:requestId
+router.get('/:requestId', protect, getWalkRequest);
 
-module.exports = mongoose.model('WalkRequest', walkRequestSchema);
+// @route   PUT /api/walk-request/:requestId/cancel
+router.put(
+  '/:requestId/cancel',
+  protect,
+  [
+    body('cancellationReason').optional().isString().withMessage('Cancellation reason must be a string'),
+    validate
+  ],
+  cancelWalkRequest
+);
+
+// @route   GET /api/walk-request/history/:userId
+router.get('/history/:userId', protect, getWalkHistory);
+
+// @route   GET /api/walk-request/active/:userId
+router.get('/active/:userId', protect, getActiveWalkRequest);
+
+module.exports = router;
