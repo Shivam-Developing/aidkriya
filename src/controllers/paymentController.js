@@ -1,5 +1,6 @@
 const Payment = require('../models/Payment');
 const WalkSession = require('../models/WalkSession');
+const WalkRequest = require('../models/WalkRequest');
 const Profile = require('../models/Profile');
 const razorpay = require('../config/razorpay');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
@@ -20,8 +21,12 @@ exports.createPaymentOrder = async (req, res) => {
       return errorResponse(res, 404, 'Walk session not found');
     }
 
-    if (walkSession.status !== 'COMPLETED') {
-      return errorResponse(res, 400, 'Walk session must be completed before payment');
+    if (walkSession.status !== 'PAYMENT_PENDING') {
+      return errorResponse(res, 400, 'Walk session not ready for payment');
+    }
+
+    if (walkSession.wandererId.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, 'Only wanderer can initiate payment');
     }
 
     // Check if payment already exists
@@ -35,16 +40,7 @@ exports.createPaymentOrder = async (req, res) => {
     }
 
     // Calculate fare if not provided
-    let fareDetails;
-    if (!total_amount) {
-      fareDetails = calculateFare(walkSession.durationMinutes);
-    } else {
-      fareDetails = {
-        totalAmount: total_amount,
-        platformCommission: platform_commission,
-        walkerEarnings: walker_earnings
-      };
-    }
+    const fareDetails = calculateFare(walkSession.durationMinutes);
 
     // Create Razorpay order
     const razorpayOrder = await razorpay.orders.create({
@@ -125,11 +121,24 @@ exports.verifyPayment = async (req, res) => {
     payment.completedAt = new Date();
     await payment.save();
 
+    const session = await WalkSession.findById(payment.walkSessionId);
+    if (session) {
+      session.status = 'COMPLETED';
+      await session.save();
+      const walkRequest = await WalkRequest.findById(session.walkRequestId);
+      if (walkRequest) {
+        walkRequest.status = 'COMPLETED';
+        walkRequest.completedAt = payment.completedAt;
+        await walkRequest.save();
+      }
+    }
+
     // Update walker's wallet and earnings
     const walkerProfile = await Profile.findOne({ userId: payment.walkerId });
     if (walkerProfile) {
       walkerProfile.walletBalance += payment.walkerEarnings;
       walkerProfile.totalEarnings += payment.walkerEarnings;
+      walkerProfile.totalWalks = (walkerProfile.totalWalks || 0) + 1;
       await walkerProfile.save();
     }
 
