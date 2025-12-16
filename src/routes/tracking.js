@@ -15,6 +15,7 @@ const { validate, validators } = require('../middleware/validation');
 // Add these imports at the top with other controller imports
 const { getWalkOtp, verifyWalkOtp } = require('../controllers/trackingController');
 const { getSessionByWalkRequestId } = require('../controllers/trackingController');
+const { updateWalkerArrivalLocation, getPartnerLocationByRequest } = require('../controllers/trackingController');
 
 // Add these routes
 router.get('/otp/:walkRequestId', protect, getWalkOtp);
@@ -58,6 +59,18 @@ router.post(
   updateLocation
 );
 
+// Pre-session: walker updates current location tied to walk request
+router.post(
+  '/update-location/:requestId',
+  protect,
+  [
+    body('latitude').custom(validators.isValidCoordinate),
+    body('longitude').custom(validators.isValidLongitude),
+    validate
+  ],
+  updateWalkerArrivalLocation
+);
+
 // @route   POST /api/tracking/end
 router.post(
   '/end',
@@ -77,6 +90,9 @@ router.get('/session/by-request/:walkRequestId', protect, getSessionByWalkReques
 
 // @route   GET /api/tracking/partner-location/:sessionId
 router.get('/partner-location/:sessionId', protect, getPartnerLocation);
+
+// Pre-session: partner location by walk request
+router.get('/partner-location/by-request/:requestId', protect, getPartnerLocationByRequest);
 
 // @route   GET /api/tracking/payment-summary/:sessionId
 router.get('/payment-summary/:sessionId', protect, getPaymentSummary);
