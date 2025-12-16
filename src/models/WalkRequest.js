@@ -71,11 +71,19 @@ const walkRequestSchema = new mongoose.Schema({
 otpExpiresAt: {
   type: Date
 },
-otpVerified: {
-  type: Boolean,
-  default: false
-}
+  otpVerified: {
+    type: Boolean,
+    default: false
+  }
 ,
+  walkerCurrentLocation: {
+    latitude: Number,
+    longitude: Number,
+    accuracy: Number,
+    heading: Number,
+    speed: Number,
+    timestamp: Date
+  },
   cancellationReason: {
     type: String
   },
