@@ -3,6 +3,7 @@ const WalkSession = require('../models/WalkSession');
 const Profile = require('../models/Profile');
 const { successResponse, errorResponse } = require('../utils/responseHelper');
 const { calculateDistance } = require('../utils/calculateDistance');
+const { calculateFare } = require('../utils/paymentHelpers');
 const { sendNotification, notificationTemplates } = require('../utils/notificationHelper');
 
 const sanitizeLocationPoint = (location = {}) => {
@@ -272,11 +273,42 @@ exports.endWalkSession = async (req, res) => {
 
     assertSessionParticipant(walkSession, req.user._id);
 
+    if (walkSession.status === 'PAYMENT_PENDING') {
+      return successResponse(res, 200, 'Awaiting payment', { session: walkSession });
+    }
+
     if (walkSession.status !== 'ACTIVE') {
       return errorResponse(res, 400, 'Walk session already closed');
     }
 
+    const requesterIsWanderer = walkSession.wandererId.toString() === req.user._id.toString();
     const endPoint = sanitizeLocationPoint(end_location);
+
+    if (requesterIsWanderer) {
+      walkSession.wandererEndRequested = true;
+      walkSession.wandererEndTimestamp = new Date();
+    } else {
+      walkSession.walkerEndRequested = true;
+      walkSession.walkerEndTimestamp = new Date();
+    }
+
+    const partnerId = requesterIsWanderer ? walkSession.walkerId : walkSession.wandererId;
+
+    const bothConfirmed = walkSession.wandererEndRequested && walkSession.walkerEndRequested;
+
+    if (!bothConfirmed) {
+      await walkSession.save();
+      const notification = notificationTemplates.partnerEndRequested();
+      await sendNotification(
+        partnerId,
+        notification.title,
+        notification.message,
+        { walkRequestId: walkSession.walkRequestId, sessionId: walkSession._id },
+        { type: 'WALK_END_REQUESTED', relatedId: walkSession.walkRequestId, relatedModel: 'WalkRequest' }
+      );
+      return successResponse(res, 200, 'End request recorded', { session: walkSession });
+    }
+
     if (!Array.isArray(walkSession.route)) {
       walkSession.route = [];
     }
@@ -299,47 +331,43 @@ exports.endWalkSession = async (req, res) => {
     }
 
     walkSession.endTime = new Date();
-    walkSession.status = 'COMPLETED';
     walkSession.durationMinutes = Math.max(
       walkSession.durationMinutes,
       Math.round((walkSession.endTime - walkSession.startTime) / (1000 * 60))
     );
 
+    walkSession.status = 'PAYMENT_PENDING';
     await walkSession.save();
 
     const walkRequest = await WalkRequest.findById(walkSession.walkRequestId);
     if (walkRequest) {
-      walkRequest.status = 'COMPLETED';
-      walkRequest.completedAt = walkSession.endTime;
+      walkRequest.status = 'PAYMENT_PENDING';
       await walkRequest.save();
     }
 
     const walkerProfile = await Profile.findOne({ userId: walkSession.walkerId });
     if (walkerProfile) {
-      walkerProfile.totalWalks += 1;
       walkerProfile.isAvailable = true;
       await walkerProfile.save();
     }
 
-    const wandererNotification = notificationTemplates.walkCompleted();
+    const paymentNotification = notificationTemplates.paymentPending();
     await sendNotification(
       walkSession.wandererId,
-      wandererNotification.title,
-      wandererNotification.message,
+      paymentNotification.title,
+      paymentNotification.message,
       { walkRequestId: walkSession.walkRequestId, sessionId: walkSession._id },
-      { type: 'WALK_COMPLETED', relatedId: walkSession.walkRequestId, relatedModel: 'WalkRequest' }
+      { type: 'PAYMENT_PENDING', relatedId: walkSession.walkRequestId, relatedModel: 'WalkRequest' }
     );
     await sendNotification(
       walkSession.walkerId,
-      wandererNotification.title,
-      wandererNotification.message,
+      paymentNotification.title,
+      paymentNotification.message,
       { walkRequestId: walkSession.walkRequestId, sessionId: walkSession._id },
-      { type: 'WALK_COMPLETED', relatedId: walkSession.walkRequestId, relatedModel: 'WalkRequest' }
+      { type: 'PAYMENT_PENDING', relatedId: walkSession.walkRequestId, relatedModel: 'WalkRequest' }
     );
 
-    successResponse(res, 200, 'Walk session completed', {
-      session: walkSession
-    });
+    successResponse(res, 200, 'Walk finalized. Proceed to payment.', { session: walkSession });
   } catch (error) {
     if (error.message === 'NOT_AUTHORIZED') {
       return errorResponse(res, 403, 'Not authorized to close this session');
@@ -436,7 +464,7 @@ exports.getSessionByWalkRequestId = async (req, res) => {
 
     const session = await WalkSession.findOne({
       walkRequestId: walkRequest._id,
-      status: { $in: ['ACTIVE', 'COMPLETED'] }
+      status: { $in: ['ACTIVE', 'PAYMENT_PENDING', 'COMPLETED'] }
     })
       .populate('walkRequestId')
       .populate('wandererId', 'name phone')
@@ -454,6 +482,37 @@ exports.getSessionByWalkRequestId = async (req, res) => {
     }
     console.error('Get session by request error:', error);
     errorResponse(res, 500, 'Error fetching session by request', error.message);
+  }
+};
+
+exports.getPaymentSummary = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const session = await WalkSession.findById(sessionId);
+    if (!session) {
+      return errorResponse(res, 404, 'Walk session not found');
+    }
+    assertSessionParticipant(session, req.user._id);
+    if (!['PAYMENT_PENDING', 'COMPLETED'].includes(session.status)) {
+      return errorResponse(res, 400, 'Payment summary not available');
+    }
+    const fare = calculateFare(session.durationMinutes || 0);
+    return successResponse(res, 200, 'Payment summary', {
+      session_id: session._id,
+      distance_km: session.totalDistance,
+      duration_minutes: session.durationMinutes,
+      fare: {
+        total_amount: fare.totalAmount,
+        platform_commission: fare.platformCommission,
+        walker_earnings: fare.walkerEarnings
+      }
+    });
+  } catch (error) {
+    if (error.message === 'NOT_AUTHORIZED') {
+      return errorResponse(res, 403, 'Not authorized to access this session');
+    }
+    console.error('Get payment summary error:', error);
+    errorResponse(res, 500, 'Error fetching payment summary', error.message);
   }
 };
 
