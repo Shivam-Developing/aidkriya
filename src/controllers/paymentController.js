@@ -160,16 +160,20 @@ exports.verifyPayment = async (req, res) => {
     payment.completedAt = new Date();
     await payment.save();
 
-    const session = await WalkSession.findById(payment.walkSessionId);
+    const session = await WalkSession.findById(payment.walkSessionId).exec();
     if (session) {
       session.status = 'COMPLETED';
+      session.endTime = session.endTime || payment.completedAt;
       await session.save();
-      const walkRequest = await WalkRequest.findById(session.walkRequestId);
-      if (walkRequest) {
-        walkRequest.status = 'COMPLETED';
-        walkRequest.completedAt = payment.completedAt;
-        await walkRequest.save();
-      }
+      console.log('[Payment] Session completed and saved:', payment.walkSessionId.toString());
+    } else {
+      console.log('[Payment] ⚠️ Session not found during completion');
+    }
+    const walkRequest = await WalkRequest.findById(session ? session.walkRequestId : null);
+    if (walkRequest) {
+      walkRequest.status = 'COMPLETED';
+      walkRequest.completedAt = payment.completedAt;
+      await walkRequest.save();
     }
 
     // Update walker's wallet and earnings
