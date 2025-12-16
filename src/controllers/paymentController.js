@@ -45,7 +45,23 @@ exports.createPaymentOrder = async (req, res) => {
     });
 
     if (existingPayment) {
-      return errorResponse(res, 400, 'Payment already exists for this session');
+      if (existingPayment.status === 'SUCCESS') {
+        return errorResponse(res, 400, 'Payment already completed for this session');
+      }
+      console.log(
+        `ℹ️ Returning existing pending payment order for session ${walk_session_id} (orderId=${existingPayment.razorpayOrderId})`
+      );
+      return successResponse(res, 200, 'Existing payment order reused', {
+        order_id: existingPayment.razorpayOrderId,
+        amount: existingPayment.totalAmount,
+        currency: 'INR',
+        payment_id: existingPayment._id,
+        key_id: process.env.RAZORPAY_KEY_ID,
+        total_amount: existingPayment.totalAmount,
+        platform_commission: existingPayment.platformCommission,
+        walker_earnings: existingPayment.walkerEarnings,
+        existing: true
+      });
     }
 
     // Calculate fare from session if available, else compute
@@ -95,7 +111,8 @@ exports.createPaymentOrder = async (req, res) => {
       key_id: process.env.RAZORPAY_KEY_ID,
       total_amount: fareDetails.totalAmount,
       platform_commission: fareDetails.platformCommission,
-      walker_earnings: fareDetails.walkerEarnings
+      walker_earnings: fareDetails.walkerEarnings,
+      existing: false
     });
   } catch (error) {
     console.error('Create payment order error:', error);
