@@ -52,9 +52,23 @@ const walkSessionSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  wandererEndRequested: {
+    type: Boolean,
+    default: false
+  },
+  walkerEndRequested: {
+    type: Boolean,
+    default: false
+  },
+  wandererEndTimestamp: {
+    type: Date
+  },
+  walkerEndTimestamp: {
+    type: Date
+  },
   status: {
     type: String,
-    enum: ['ACTIVE', 'COMPLETED', 'CANCELLED'],
+    enum: ['ACTIVE', 'PAYMENT_PENDING', 'COMPLETED', 'CANCELLED'],
     default: 'ACTIVE'
   },
   sosTriggered: {
