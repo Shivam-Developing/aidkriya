@@ -1,198 +1,195 @@
-const Payment = require('../models/Payment');
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+const Transaction = require('../models/Transaction');
 const WalkSession = require('../models/WalkSession');
-const WalkRequest = require('../models/WalkRequest');
-const Profile = require('../models/Profile');
-const razorpay = require('../config/razorpay');
-const { successResponse, errorResponse } = require('../utils/responseHelper');
-const { calculateFare, verifyRazorpaySignature } = require('../utils/paymentHelpers');
-const { sendNotification, notificationTemplates } = require('../utils/notificationHelper');
+const User = require('../models/User');
 
-// @desc    Create payment order
+// Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// @desc    Create Razorpay order for payment
 // @route   POST /api/payment/create-order
 // @access  Private
 exports.createPaymentOrder = async (req, res) => {
   try {
     const { walk_session_id } = req.body;
+    const userId = req.user._id;
 
-    // Ensure Razorpay credentials are configured
-    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-      return errorResponse(res, 500, 'Payment gateway not configured');
+    // Fetch walk session
+    const session = await WalkSession.findById(walk_session_id);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Walk session not found',
+      });
     }
 
-    // Validate walk session
-    if (!walk_session_id) {
-      return errorResponse(res, 400, 'Walk session ID is required');
+    // Check if user is the wanderer
+    if (session.wandererId.toString() !== userId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only wanderer can initiate payment',
+      });
     }
 
-    const walkSession = await WalkSession.findById(walk_session_id);
+    // Get payment summary to calculate amount
+    const distance = session.totalDistance || 0;
+    const duration = session.duration || 0;
+    
+    // Calculate fare
+    const baseFare = 10; // Base fare in rupees
+    const perKmRate = 5; // Rate per km
+    const totalFare = baseFare + (distance * perKmRate);
+    
+    const platformCommission = (totalFare * 0.25); // 25% commission
+    const walkerEarnings = totalFare - platformCommission;
 
-    if (!walkSession) {
-      return errorResponse(res, 404, 'Walk session not found');
-    }
+    // Amount in paise (Razorpay requires amount in smallest currency unit)
+    const amountInPaise = Math.round(totalFare * 100);
 
-    if (walkSession.status !== 'PAYMENT_PENDING') {
-      return errorResponse(res, 400, 'Walk session not ready for payment');
-    }
-
-    if (walkSession.wandererId.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, 'Only wanderer can initiate payment');
-    }
-
-    // Check if payment already exists
-    const existingPayment = await Payment.findOne({
-      walkSessionId: walk_session_id,
-      status: { $in: ['SUCCESS', 'PENDING'] }
-    });
-
-    if (existingPayment) {
-      return errorResponse(res, 400, 'Payment already exists for this session');
-    }
-
-    // Calculate fare from session if available, else compute
-    const fareDetails = walkSession.fareTotalAmount
-      ? {
-          totalAmount: walkSession.fareTotalAmount,
-          platformCommission: walkSession.farePlatformCommission,
-          walkerEarnings: walkSession.fareWalkerEarnings
-        }
-      : calculateFare(walkSession.durationMinutes || 0);
+    // ✅ FIX: Generate receipt ID with max 40 characters
+    // MongoDB ObjectId is 24 chars, so we can safely use it directly
+    const receiptId = `WLK_${walk_session_id.toString().substring(0, 35)}`; // WLK_ (4) + 35 = 39 chars max
 
     // Create Razorpay order
-    const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(fareDetails.totalAmount * 100), // paise
+    const orderOptions = {
+      amount: amountInPaise,
       currency: 'INR',
-      receipt: `order_${walk_session_id}_${Date.now()}`,
+      receipt: receiptId, // ✅ Max 40 characters [web:18]
       notes: {
-        walk_session_id,
-        wanderer_id: walkSession.wandererId.toString(),
-        walker_id: walkSession.walkerId.toString()
-      }
+        sessionId: walk_session_id.toString(),
+        wandererId: session.wandererId.toString(),
+        walkerId: session.walkerId.toString(),
+        type: 'WALK_PAYMENT',
+        distance: distance.toFixed(2),
+        duration: duration.toString(),
+      },
+    };
+
+    const order = await razorpay.orders.create(orderOptions);
+
+    // Create transaction record
+    const transaction = new Transaction({
+      user: userId,
+      type: 'PAYMENT',
+      amount: totalFare,
+      status: 'PENDING',
+      razorpayOrderId: order.id,
+      walkSession: walk_session_id,
+      description: `Payment for walk session`,
+      paymentDetails: {
+        baseFare,
+        distance,
+        platformCommission,
+        walkerEarnings,
+      },
     });
 
-    // Create payment record
-    const payment = await Payment.create({
-      walkSessionId: walk_session_id,
-      wandererId: walkSession.wandererId,
-      walkerId: walkSession.walkerId,
-      totalAmount: fareDetails.totalAmount,
-      platformCommission: fareDetails.platformCommission,
-      walkerEarnings: fareDetails.walkerEarnings,
-      paymentMethod: 'UPI', // Default, will be updated
-      razorpayOrderId: razorpayOrder.id,
-      status: 'PENDING'
-    });
+    await transaction.save();
 
-    successResponse(res, 201, 'Payment order created successfully', {
-      order_id: razorpayOrder.id,
-      amount: fareDetails.totalAmount,
-      currency: 'INR',
-      payment_id: payment._id,
-      key_id: process.env.RAZORPAY_KEY_ID,
-      total_amount: fareDetails.totalAmount,
-      platform_commission: fareDetails.platformCommission,
-      walker_earnings: fareDetails.walkerEarnings
+    return res.status(200).json({
+      success: true,
+      message: 'Payment order created successfully',
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        key: process.env.RAZORPAY_KEY_ID,
+        transactionId: transaction._id,
+        fare: {
+          totalAmount: totalFare,
+          platformCommission,
+          walkerEarnings,
+        },
+      },
     });
   } catch (error) {
     console.error('Create payment order error:', error);
-    const message = error?.message || 'Error creating payment order';
-    errorResponse(res, 500, message);
+    return res.status(500).json({
+      success: false,
+      message: 'Error creating payment order',
+      error: error.message,
+    });
   }
 };
 
-// @desc    Verify payment
+// @desc    Verify Razorpay payment
 // @route   POST /api/payment/verify
 // @access  Private
 exports.verifyPayment = async (req, res) => {
   try {
     const {
-      walk_session_id,
       razorpay_payment_id,
       razorpay_order_id,
       razorpay_signature,
-      total_amount,
-      platform_commission,
-      walker_earnings
+      walk_session_id,
     } = req.body;
 
+    // Generate signature for verification
+    const generatedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
     // Verify signature
-    const isValid = verifyRazorpaySignature(
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature
-    );
-
-    if (!isValid) {
-      return errorResponse(res, 400, 'Payment verification failed. Invalid signature.');
+    if (generatedSignature !== razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment signature',
+      });
     }
 
-    // Find and update payment
-    const payment = await Payment.findOne({ razorpayOrderId: razorpay_order_id });
+    // Update transaction
+    const transaction = await Transaction.findOne({
+      razorpayOrderId: razorpay_order_id,
+    });
 
-    if (!payment) {
-      return errorResponse(res, 404, 'Payment record not found');
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction not found',
+      });
     }
 
-    payment.razorpayPaymentId = razorpay_payment_id;
-    payment.razorpaySignature = razorpay_signature;
-    payment.status = 'SUCCESS';
-    payment.completedAt = new Date();
-    await payment.save();
+    transaction.status = 'COMPLETED';
+    transaction.razorpayPaymentId = razorpay_payment_id;
+    transaction.razorpaySignature = razorpay_signature;
+    transaction.completedAt = new Date();
+    await transaction.save();
 
-    const session = await WalkSession.findById(payment.walkSessionId);
+    // Update walk session status to COMPLETED
+    const session = await WalkSession.findById(walk_session_id);
     if (session) {
       session.status = 'COMPLETED';
       await session.save();
-      const walkRequest = await WalkRequest.findById(session.walkRequestId);
-      if (walkRequest) {
-        walkRequest.status = 'COMPLETED';
-        walkRequest.completedAt = payment.completedAt;
-        await walkRequest.save();
+
+      // Update walker earnings
+      const walker = await User.findById(session.walkerId);
+      if (walker) {
+        walker.walletBalance += transaction.paymentDetails.walkerEarnings;
+        walker.totalEarnings += transaction.paymentDetails.walkerEarnings;
+        await walker.save();
       }
     }
 
-    // Update walker's wallet and earnings
-    const walkerProfile = await Profile.findOne({ userId: payment.walkerId });
-    if (walkerProfile) {
-      walkerProfile.walletBalance += payment.walkerEarnings;
-      walkerProfile.totalEarnings += payment.walkerEarnings;
-      walkerProfile.totalWalks = (walkerProfile.totalWalks || 0) + 1;
-      await walkerProfile.save();
-    }
-
-    // Send notifications
-    const notification = notificationTemplates.paymentSuccess(payment.totalAmount);
-    await sendNotification(
-      payment.wandererId,
-      notification.title,
-      notification.message,
-      { paymentId: payment._id },
-      { type: notification.type, relatedId: payment._id, relatedModel: 'Payment' }
-    );
-    await sendNotification(
-      payment.walkerId,
-      'Earnings Added',
-      `₹${payment.walkerEarnings} has been added to your wallet!`,
-      { paymentId: payment._id },
-      { type: 'EARNING_ADDED', relatedId: payment._id, relatedModel: 'Payment' }
-    );
-
-    successResponse(res, 200, 'Payment verified successfully', {
-      id: payment._id,
-      walk_session_id: payment.walkSessionId,
-      wanderer_id: payment.wandererId,
-      walker_id: payment.walkerId,
-      total_amount: payment.totalAmount,
-      platform_commission: payment.platformCommission,
-      walker_earnings: payment.walkerEarnings,
-      payment_method: payment.paymentMethod,
-      razorpay_payment_id: payment.razorpayPaymentId,
-      razorpay_order_id: payment.razorpayOrderId,
-      status: payment.status,
-      completed_at: payment.completedAt
+    return res.status(200).json({
+      success: true,
+      message: 'Payment verified successfully',
+      data: {
+        transactionId: transaction._id,
+        paymentId: razorpay_payment_id,
+      },
     });
   } catch (error) {
     console.error('Verify payment error:', error);
-    errorResponse(res, 500, 'Error verifying payment', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Error verifying payment',
+      error: error.message,
+    });
   }
 };
 
@@ -202,54 +199,41 @@ exports.verifyPayment = async (req, res) => {
 exports.getTransactionHistory = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { page = 1, limit = 20 } = req.query;
+    const { page = 1, limit = 10, type } = req.query;
 
-    const skip = (page - 1) * limit;
+    const filter = { user: userId };
+    if (type) {
+      filter.type = type;
+    }
 
-    const [transactions, total] = await Promise.all([
-      Payment.find({
-        $or: [{ wandererId: userId }, { walkerId: userId }],
-        status: 'SUCCESS'
-      })
-        .sort({ completedAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .populate('walkSessionId'),
-      Payment.countDocuments({
-        $or: [{ wandererId: userId }, { walkerId: userId }],
-        status: 'SUCCESS'
-      })
-    ]);
+    const transactions = await Transaction.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('walkSession', 'startedAt endedAt')
+      .lean();
 
-    // Transform to transaction format
-    const formattedTransactions = transactions.map(payment => {
-      const isWanderer = payment.wandererId.toString() === userId;
-      
-      return {
-        id: payment._id,
-        user_id: userId,
-        type: isWanderer ? 'PAYMENT' : 'EARNING',
-        amount: isWanderer ? payment.totalAmount : payment.walkerEarnings,
-        description: isWanderer 
-          ? `Payment for walk session`
-          : `Earnings from walk session`,
-        timestamp: payment.completedAt,
-        reference_id: payment._id,
-        status: payment.status
-      };
-    });
+    const count = await Transaction.countDocuments(filter);
 
-    successResponse(res, 200, 'Transaction history retrieved', {
-      transactions: formattedTransactions,
-      pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(total / limit),
-        totalItems: total
-      }
+    return res.status(200).json({
+      success: true,
+      message: 'Transaction history retrieved',
+      data: {
+        transactions,
+        pagination: {
+          currentPage: Number(page),
+          totalPages: Math.ceil(count / limit),
+          totalItems: count,
+        },
+      },
     });
   } catch (error) {
     console.error('Get transaction history error:', error);
-    errorResponse(res, 500, 'Error fetching transaction history', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Error retrieving transaction history',
+      error: error.message,
+    });
   }
 };
 
@@ -260,19 +244,30 @@ exports.getPaymentDetails = async (req, res) => {
   try {
     const { paymentId } = req.params;
 
-    const payment = await Payment.findById(paymentId)
-      .populate('wandererId', 'name')
-      .populate('walkerId', 'name')
-      .populate('walkSessionId');
+    const transaction = await Transaction.findById(paymentId)
+      .populate('user', 'name email phone')
+      .populate('walkSession')
+      .lean();
 
-    if (!payment) {
-      return errorResponse(res, 404, 'Payment not found');
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: 'Payment not found',
+      });
     }
 
-    successResponse(res, 200, 'Payment details retrieved', { payment });
+    return res.status(200).json({
+      success: true,
+      message: 'Payment details retrieved',
+      data: transaction,
+    });
   } catch (error) {
     console.error('Get payment details error:', error);
-    errorResponse(res, 500, 'Error fetching payment details', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Error retrieving payment details',
+      error: error.message,
+    });
   }
 };
 
@@ -283,25 +278,42 @@ exports.addToWallet = async (req, res) => {
   try {
     const { user_id, amount } = req.body;
 
-    if (!amount || amount <= 0) {
-      return errorResponse(res, 400, 'Invalid amount');
+    const user = await User.findById(user_id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
     }
 
-    const profile = await Profile.findOne({ userId: user_id });
+    user.walletBalance += amount;
+    await user.save();
 
-    if (!profile) {
-      return errorResponse(res, 404, 'Profile not found');
-    }
+    // Create transaction record
+    const transaction = new Transaction({
+      user: user_id,
+      type: 'WALLET_CREDIT',
+      amount,
+      status: 'COMPLETED',
+      description: 'Wallet top-up',
+    });
+    await transaction.save();
 
-    profile.walletBalance += parseFloat(amount);
-    await profile.save();
-
-    successResponse(res, 200, 'Money added to wallet successfully', {
-      wallet_balance: profile.walletBalance
+    return res.status(200).json({
+      success: true,
+      message: 'Wallet updated successfully',
+      data: {
+        walletBalance: user.walletBalance,
+        transactionId: transaction._id,
+      },
     });
   } catch (error) {
     console.error('Add to wallet error:', error);
-    errorResponse(res, 500, 'Error adding money to wallet', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Error adding to wallet',
+      error: error.message,
+    });
   }
 };
 
@@ -312,17 +324,36 @@ exports.getWalletBalance = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const profile = await Profile.findOne({ userId });
-
-    if (!profile) {
-      return errorResponse(res, 404, 'Profile not found');
+    const user = await User.findById(userId).select('walletBalance');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
     }
 
-    successResponse(res, 200, 'Wallet balance retrieved', {
-      balance: profile.walletBalance || 0
+    return res.status(200).json({
+      success: true,
+      message: 'Wallet balance retrieved',
+      data: {
+        walletBalance: user.walletBalance || 0,
+      },
     });
   } catch (error) {
     console.error('Get wallet balance error:', error);
-    errorResponse(res, 500, 'Error fetching wallet balance', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Error retrieving wallet balance',
+      error: error.message,
+    });
   }
+};
+
+module.exports = {
+  createPaymentOrder,
+  verifyPayment,
+  getTransactionHistory,
+  getPaymentDetails,
+  addToWallet,
+  getWalletBalance,
 };
